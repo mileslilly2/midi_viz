@@ -1,5 +1,4 @@
 .venv/
-out/
 frames/
 data/everyday_fixed.json
 data/everyday.wav
