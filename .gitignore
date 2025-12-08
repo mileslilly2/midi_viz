@@ -1,0 +1,9 @@
+.venv/
+out/
+frames/
+data/everyday_fixed.json
+data/everyday.wav
+*.class
+*.mp4
+processing-4*
+processing.tgz
