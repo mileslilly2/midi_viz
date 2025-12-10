@@ -1,60 +1,78 @@
 // ------------------------------------------------------------
-// REALISTIC MIDI FALLING PIANO (USING JSON INSTEAD OF MIDI)
+// PERFECT SYNC PIANO-ROLL RENDERER (Processing + Sound library)
 // ------------------------------------------------------------
-//  ✔ Reads everyday_fixed.json (exported from your Python script)
-//  ✔ Realistic 88-key layout
-//  ✔ Notes fall based on start/end seconds
-//  ✔ JAVA2D only — works in Processing Snap on Lubuntu
+// ✔ Reads WAV duration from SoundFile → works in SNAP
+// ✔ Computes total frames = duration * fps
+// ✔ Advances time deterministically: t = frame / fps
+// ✔ Loads notes from everyday_fixed.json
+// ✔ Uses your original piano layout
+// ✔ Saves frames for ffmpeg
 // ------------------------------------------------------------
 
+import processing.sound.*;
+import processing.data.*;
 import java.io.*;
-import processing.data.JSONObject;
-import processing.data.JSONArray;
 
 ArrayList<NoteEvent> notes = new ArrayList<NoteEvent>();
 ArrayList<PianoKey> keys = new ArrayList<PianoKey>();
 
-float pixelsPerSecond = 350;   // falling speed
-float startTime = 0;
-int frameCounter = 0;
+SoundFile wav;
+
+float songDuration = 0;
+int fps = 30;
+int totalFrames = 0;
+int frameNumber = 0;
+
+float pixelsPerSecond = 350;
 
 // ------------------------------------------------------------
 // SETTINGS
 // ------------------------------------------------------------
 void settings() {
-  size(1080, 920, JAVA2D);   // NO OpenGL
+  size(1080, 920, JAVA2D);  // No OpenGL for SNAP
 }
 
 // ------------------------------------------------------------
 // SETUP
 // ------------------------------------------------------------
 void setup() {
-  frameRate(60);
+  frameRate(fps);
   colorMode(HSB, 360, 100, 100);
 
-  println("Building piano...");
-  buildPiano();
+  println("Loading WAV...");
+  wav = new SoundFile(this, "everyday.wav");
+  songDuration = wav.duration();
+  println("Song duration =", songDuration, "seconds");
 
-  println("Loading JSON notes...");
+  totalFrames = int(songDuration * fps);
+  println("Rendering", totalFrames, "frames at", fps, "fps");
+
+  buildPiano();
   loadJSONNotes("everyday_fixed.json");
 
-  println("Loaded " + notes.size() + " notes");
+  println("Loaded", notes.size(), "notes.");
 
   File f = new File("frames");
   if (!f.exists()) f.mkdirs();
-
-  startTime = millis() / 1000.0;
 }
 
 // ------------------------------------------------------------
-// DRAW LOOP
+// MAIN DRAW LOOP (DETERMINISTIC TIMESTEP)
 // ------------------------------------------------------------
 void draw() {
+
+  if (frameNumber >= totalFrames) {
+    println("Rendering complete.");
+    exit();
+    return;
+  }
+
   background(0);
 
-  float t = (millis() / 1000.0) - startTime;
+  // Fixed simulation time for this frame:
+  float t = frameNumber / float(fps);
 
-  // draw falling notes
+  // update + draw notes
   for (NoteEvent n : notes) {
     n.update(t);
     n.draw();
@@ -62,56 +80,64 @@ void draw() {
 
   drawPiano();
 
-  // save frame
-  saveFrame("frames/frame_" + nf(frameCounter++, 5) + ".png");
+  saveFrame("frames/frame_" + nf(frameNumber, 5) + ".png");
+  frameNumber++;
 }
 
+
 // ============================================================
-// 1. LOAD JSON
+// NOTE EVENT
 // ============================================================
 class NoteEvent {
   int pitch;
   int velocity;
-  float start;
-  float end;
-  PianoKey key;
+  float start, end;
   float y;
+  float rectH;
+  PianoKey key;
+
+  float yOffset = -600;  // START ABOVE THE SCREEN
 
   NoteEvent(JSONObject obj) {
     pitch = obj.getInt("pitch");
     velocity = obj.getInt("velocity");
     start = obj.getFloat("start");
-    end = obj.getFloat("end");
+    end   = obj.getFloat("end");
 
-    // find piano key
+    // assign key
     for (PianoKey k : keys) {
       if (k.midi == pitch) {
         key = k;
         break;
       }
     }
+
+    // height based on duration
+    float dur = end - start;
+    rectH = max(20, dur * pixelsPerSecond);
   }
 
   void update(float t) {
     float dt = t - start;
-    y = dt * pixelsPerSecond;
+    y = yOffset + dt * pixelsPerSecond;
   }
 
   void draw() {
     if (key == null) return;
-
-    float dur = end - start;
-    float h = max(20, dur * pixelsPerSecond);
 
     float hue = map(pitch, 21, 108, 0, 360);
     float b = map(velocity, 0, 127, 30, 100);
 
     fill(hue, 80, b, 180);
     noStroke();
-    rect(key.x, y, key.w, h, 8);
+    rect(key.x, y, key.w, rectH, 8);
   }
 }
 
+
+// ============================================================
+// LOAD JSON
+// ============================================================
 void loadJSONNotes(String filename) {
   JSONArray arr = loadJSONArray(filename);
   for (int i = 0; i < arr.size(); i++) {
@@ -119,8 +145,9 @@ void loadJSONNotes(String filename) {
   }
 }
 
+
 // ============================================================
-// 2. REALISTIC PIANO CONSTRUCTION
+// PIANO KEY CLASS
 // ============================================================
 class PianoKey {
   float x, y, w, h;
@@ -128,6 +155,10 @@ class PianoKey {
   int midi;
 }
 
+
+// ============================================================
+// BUILD YOUR ORIGINAL PIANO
+// ============================================================
 void buildPiano() {
   keys.clear();
 
@@ -136,10 +167,10 @@ void buildPiano() {
   float blackW = whiteW * 0.6;
   float blackH = whiteH * 0.65;
 
-  int midi = 21; // A0
+  int midi = 21;
   float x = 0;
 
-  // White keys
+  // white keys
   for (int i = 0; i < 52; i++) {
     PianoKey k = new PianoKey();
     k.x = x;
@@ -150,7 +181,6 @@ void buildPiano() {
     k.midi = midi;
 
     keys.add(k);
-
     x += whiteW;
 
     int pattern = i % 7;
@@ -158,16 +188,16 @@ void buildPiano() {
     else midi += 2;
   }
 
-  // Black key positions
+  // black keys
   int[] blackPattern = {1,2,4,5,6};
   midi = 22;
 
   for (int octave = 0; octave < 7; octave++) {
     for (int bp : blackPattern) {
-      int whiteIndex = octave * 7 + bp;
-      if (whiteIndex >= 52) continue;
+      int wi = octave * 7 + bp;
+      if (wi >= 52) continue;
 
-      PianoKey wk = keys.get(whiteIndex);
+      PianoKey wk = keys.get(wi);
 
       PianoKey bk = new PianoKey();
       bk.w = blackW;
@@ -183,8 +213,13 @@ void buildPiano() {
   }
 }
 
+
+// ============================================================
+// DRAW PIANO
+// ============================================================
 void drawPiano() {
-  // draw white keys
+
+  // white keys
   for (PianoKey k : keys) {
     if (!k.black) {
       fill(255);
@@ -193,7 +228,7 @@ void drawPiano() {
     }
   }
 
-  // draw black keys
+  // black keys
   for (PianoKey k : keys) {
     if (k.black) {
       fill(30);
